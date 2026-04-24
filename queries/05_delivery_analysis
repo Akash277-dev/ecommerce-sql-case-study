@@ -1,0 +1,119 @@
+-- ============================================================
+-- 05. DELIVERY & LOGISTICS ANALYSIS
+-- E-Commerce SQL Case Study | Akash Mishra
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 5.1 Average delivery time overall
+-- ------------------------------------------------------------
+SELECT
+    ROUND(AVG(
+        EXTRACT(EPOCH FROM (order_delivered_customer_date - order_purchase_timestamp)) / 86400
+    )::NUMERIC, 1) AS avg_delivery_days
+FROM olist_orders
+WHERE order_status = 'delivered'
+  AND order_delivered_customer_date IS NOT NULL;
+
+
+-- ------------------------------------------------------------
+-- 5.2 Average delivery time by state
+-- (Which states get the fastest/slowest delivery?)
+-- ------------------------------------------------------------
+SELECT
+    c.customer_state AS state,
+    ROUND(AVG(
+        EXTRACT(EPOCH FROM (o.order_delivered_customer_date - o.order_purchase_timestamp)) / 86400
+    )::NUMERIC, 1) AS avg_delivery_days,
+    COUNT(o.order_id) AS total_orders
+FROM olist_orders o
+JOIN olist_customers c ON o.customer_id = c.customer_id
+WHERE o.order_status = 'delivered'
+  AND o.order_delivered_customer_date IS NOT NULL
+GROUP BY 1
+ORDER BY 2 DESC;
+
+
+-- ------------------------------------------------------------
+-- 5.3 On-time vs. late deliveries
+-- (Estimated vs actual delivery date)
+-- ------------------------------------------------------------
+SELECT
+    CASE
+        WHEN order_delivered_customer_date <= order_estimated_delivery_date
+        THEN 'On Time'
+        ELSE 'Late'
+    END AS delivery_status,
+    COUNT(*) AS num_orders,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 2) AS pct
+FROM olist_orders
+WHERE order_status = 'delivered'
+  AND order_delivered_customer_date IS NOT NULL
+  AND order_estimated_delivery_date IS NOT NULL
+GROUP BY 1;
+
+
+-- ------------------------------------------------------------
+-- 5.4 Average delay (days late) by state
+-- ------------------------------------------------------------
+SELECT
+    c.customer_state AS state,
+    ROUND(AVG(
+        EXTRACT(EPOCH FROM (
+            o.order_delivered_customer_date - o.order_estimated_delivery_date
+        )) / 86400
+    )::NUMERIC, 1) AS avg_delay_days
+FROM olist_orders o
+JOIN olist_customers c ON o.customer_id = c.customer_id
+WHERE o.order_status = 'delivered'
+  AND o.order_delivered_customer_date > o.order_estimated_delivery_date
+GROUP BY 1
+ORDER BY 2 DESC;
+
+
+-- ------------------------------------------------------------
+-- 5.5 Delivery time impact on review score
+-- (Do faster deliveries get better reviews?)
+-- ------------------------------------------------------------
+WITH delivery_stats AS (
+    SELECT
+        o.order_id,
+        EXTRACT(EPOCH FROM (
+            o.order_delivered_customer_date - o.order_purchase_timestamp
+        )) / 86400 AS delivery_days,
+        r.review_score
+    FROM olist_orders o
+    JOIN olist_order_reviews r ON o.order_id = r.order_id
+    WHERE o.order_status = 'delivered'
+      AND o.order_delivered_customer_date IS NOT NULL
+)
+SELECT
+    CASE
+        WHEN delivery_days <= 5  THEN '0-5 days'
+        WHEN delivery_days <= 10 THEN '6-10 days'
+        WHEN delivery_days <= 20 THEN '11-20 days'
+        WHEN delivery_days <= 30 THEN '21-30 days'
+        ELSE '30+ days'
+    END AS delivery_bucket,
+    COUNT(*) AS num_orders,
+    ROUND(AVG(review_score)::NUMERIC, 2) AS avg_review_score
+FROM delivery_stats
+GROUP BY 1
+ORDER BY MIN(delivery_days);
+
+
+-- ------------------------------------------------------------
+-- 5.6 Freight cost analysis by state
+-- ------------------------------------------------------------
+SELECT
+    c.customer_state AS state,
+    ROUND(AVG(oi.freight_value)::NUMERIC, 2) AS avg_freight_cost,
+    ROUND(AVG(oi.price)::NUMERIC, 2)         AS avg_product_price,
+    ROUND(
+        AVG(oi.freight_value) / NULLIF(AVG(oi.price), 0) * 100
+    ::NUMERIC, 1) AS freight_pct_of_price
+FROM olist_order_items oi
+JOIN olist_orders o ON oi.order_id = o.order_id
+JOIN olist_customers c ON o.customer_id = c.customer_id
+WHERE o.order_status = 'delivered'
+GROUP BY 1
+ORDER BY 2 DESC;
